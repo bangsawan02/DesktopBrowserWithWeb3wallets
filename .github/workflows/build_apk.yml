@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       prepareRelease:
-        description: 'Create a draft release in Google Play Store'     
+        description: 'Create a draft release in Google Play Store'
         required: true
         default: 'no'
 
@@ -22,17 +22,6 @@ jobs:
       matrix:
         platform: [arm64]
 
-    # The GitHub Actions machines have a "slow disk", and a SSD "fast" disk.
-    # However, there is not enough space to do all the processing on the SSD.
-    
-    # We refer to the disks based on their name in /dev/disk
-    # /dev/disk/azure/root-part1 is / ("slow disk")
-    # /dev/disk/azure/resource-part1 is a 14 GB ephemeral SSD disk mounted in /mnt
-
-    # We store the source-code repository (kiwibrowser/src) on /dev/disk/azure/root-part1
-    # We store cache, dependencies and output on /dev/disk/azure/resource-part1 (SSD)
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       - name: Initializing build
         run: echo Initializing build for platform ${{ matrix.platform }}
@@ -46,33 +35,23 @@ jobs:
         run: sudo rm -rf /usr/share/dotnet
 
       - name: Checking-out source-code in $GITHUB_WORKSPACE
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Creating secondary disk folder on /dev/disk/azure/resource-part1 (SSD)
         run: |
           sudo mkdir -p /extended_data
           sudo chown -R runner:docker /extended_data
-      
-      # If you want to use only the SSD, you can use:
+
       - name: On SSD - Creating symlink on /dev/disk/azure/root-part1 pointing to /dev/disk/azure/resource-part1
         run: |
           sudo ln -s /extended_data /mnt/secondary_disk
           sudo ln -s /mnt/secondary_disk $GITHUB_WORKSPACE/
 
-      # or alternatively, to work on the main partition
-      # - name: On HDD - Creating symlink on /dev/disk/azure/root-part1 pointing to /dev/disk/azure/resource-part1
-      #  run: |
-      #    sudo ln -s /extended_data /mnt/secondary_disk
-      #    sudo ln -s /mnt/secondary_disk $GITHUB_WORKSPACE/
-
-      # We cannot checkout outside of $GITHUB_WORKSPACE, but we want to checkout to the SSD
-      # so we have a symbolic link $GITHUB_WORKSPACE/secondary_disk/ pointing to the SSD
-      # and checkout the code there
       - name: Checking-out CIPD dependencies in /mnt/secondary_disk/.cipd
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           repository: kiwibrowser/dependencies
-          path: ./secondary_disk/.cipd 
+          path: ./secondary_disk/.cipd
 
       - name: Linking .cipd in the proper path and copying .gclient and .gclient_entries
         run: |
@@ -131,16 +110,12 @@ jobs:
         run: git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
 
       - name: Adding depot_tools to path
-        env:
-          ACTIONS_ALLOW_UNSECURE_COMMANDS: true
-        run: echo "::add-path::$GITHUB_WORKSPACE/secondary_disk/depot_tools"
+        run: echo "$GITHUB_WORKSPACE/secondary_disk/depot_tools" >> $GITHUB_PATH
 
       - name: Setting environment variables
-        env:
-          ACTIONS_ALLOW_UNSECURE_COMMANDS: true
         run: |
-          echo "::set-env name=CC::ccache clang -Qunused-arguments"
-          echo "::set-env name=CXX::ccache clang++ -Qunused-arguments"
+          echo "CC=ccache clang -Qunused-arguments" >> $GITHUB_ENV
+          echo "CXX=ccache clang++ -Qunused-arguments" >> $GITHUB_ENV
 
       - name: Checking available disk-space
         run: df -h
@@ -158,7 +133,7 @@ jobs:
         run: |
           sudo mkdir -p /mnt/cache
           sudo chown -R runner:docker /mnt/cache
-          
+
       - name: Creating symlink in $HOME/cache pointing to cache on /dev/disk/azure/resource-part1
         run: ln -s /mnt/cache $HOME/
 
@@ -167,10 +142,10 @@ jobs:
 
       - name: Checking available disk-space after downloading cache
         run: df -h
-        
+
       - name: Fetching number for the latest stable version of Chromium
         run: curl "https://omahaproxy.appspot.com/all" | grep -Fi "android,stable" | cut -f3 -d"," | awk '{split($0,a,"."); print "MAJOR=" a[1] "\nMINOR=" a[2] "\nBUILD=" a[3] "\nPATCH=" a[4]}' > chrome/VERSION
-        
+
       - name: Calculating cache size
         run: du -csh $HOME/cache
 
@@ -205,8 +180,6 @@ jobs:
       - name: Checking available disk-space before build
         run: df -h
 
-      # We compile component by component as 6 hours is not enough for the initial build
-      # so we can snapshot between each component and continue further from the snapshot
       - name: Compiling source-code (base)
         run: ninja -C ./secondary_disk/out/android_${{ matrix.platform }} base
 
@@ -222,7 +195,7 @@ jobs:
       - name: Uploading binary objects to cache
         if: ${{ github.repository_owner == 'kiwibrowser' }}
         run: rclone copy --fast-list --transfers=32 $HOME/cache/ sync:kiwibrowser-ccache-${{ matrix.platform }}/
-  
+
       - name: Compiling source-code (components/version_info)
         run: ninja -C ./secondary_disk/out/android_${{ matrix.platform }} components/version_info
 
@@ -231,7 +204,7 @@ jobs:
 
       - name: Compiling source-code (chrome/browser:resources)
         run: ninja -C ./secondary_disk/out/android_${{ matrix.platform }} chrome/browser:resources
-  
+
       - name: Compiling source-code (chrome/browser/ui)
         run: ninja -C ./secondary_disk/out/android_${{ matrix.platform }} chrome/browser/ui
 
@@ -298,7 +271,7 @@ jobs:
           echo Compression completed.
 
       - name: Uploading APK
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v4
         with:
           name: apk-${{ matrix.platform }}
           path: ./secondary_disk/out/android_${{ matrix.platform }}/apks/
@@ -325,16 +298,41 @@ jobs:
           echo 'user = storage' >> $HOME/.config/rclone/rclone.conf
           echo 'key_pem = ${{ secrets.STORAGE_KEY }}' >> $HOME/.config/rclone/rclone.conf
 
-      - name: Creating release
-        id: create_release
-        uses: actions/create-release@v1.1.4
+      - name: Downloading artifact (arm)
+        uses: actions/download-artifact@v4
+        with:
+          name: apk-arm
+          path: ./apk-arm
+        continue-on-error: true
+
+      - name: Downloading artifact (arm64)
+        uses: actions/download-artifact@v4
+        with:
+          name: apk-arm64
+          path: ./apk-arm64
+        continue-on-error: true
+
+      - name: Downloading artifact (x86)
+        uses: actions/download-artifact@v4
+        with:
+          name: apk-x86
+          path: ./apk-x86
+        continue-on-error: true
+
+      - name: Downloading artifact (x64)
+        uses: actions/download-artifact@v4
+        with:
+          name: apk-x64
+          path: ./apk-x64
+        continue-on-error: true
+
+      - name: Creating release and uploading mapping files
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
-          owner: "kiwibrowser"
-          repo: "src"
           tag_name: ${{ github.run_id }}
-          release_name: Generation ${{ github.run_id }}
+          name: Generation ${{ github.run_id }}
           draft: false
           prerelease: true
           body: |
@@ -345,118 +343,27 @@ jobs:
 
             If you want the latest release of Kiwi Browser, you should go to:
             https://github.com/kiwibrowser/src.next/releases
-
-      - name: Downloading artifact (arm)
-        uses: actions/download-artifact@v1
-        with:
-          name: apk-arm
-
-      - name: Downloading artifact (arm64)
-        uses: actions/download-artifact@v1
-        with:
-          name: apk-arm64
-
-      - name: Downloading artifact (x86)
-        uses: actions/download-artifact@v1
-        with:
-          name: apk-x86
-
-      - name: Downloading artifact (x64)
-        uses: actions/download-artifact@v1
-        with:
-          name: apk-x64
-
-      - name: Uploading mapping file into GitHub release (arm)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-arm/ChromePublic.apk.mapping
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-arm.mapping
-          asset_content_type: application/vnd.android.package-archive
-
-      - name: Uploading mapping file into GitHub release (arm64)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-arm64/ChromePublic.apk.mapping
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-arm64.mapping
-          asset_content_type: application/vnd.android.package-archive
-
-      - name: Uploading mapping file into GitHub release (x86)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-x86/ChromePublic.apk.mapping
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-x86.mapping
-          asset_content_type: application/vnd.android.package-archive
-
-      - name: Uploading mapping file into GitHub release (x64)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-x64/ChromePublic.apk.mapping
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-x64.mapping
-          asset_content_type: application/vnd.android.package-archive
-
-      - name: Uploading native mapping file into GitHub release (arm)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-arm/ChromePublic.native.mapping.tar.gz
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-arm.native.mapping.tar.gz
-          asset_content_type: application/vnd.android.package-archive
-
-      - name: Uploading native mapping file into GitHub release (arm64)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-arm64/ChromePublic.native.mapping.tar.gz
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-arm64.native.mapping.tar.gz
-          asset_content_type: application/vnd.android.package-archive
-
-      - name: Uploading native mapping file into GitHub release (x86)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-x86/ChromePublic.native.mapping.tar.gz
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-x86.native.mapping.tar.gz
-          asset_content_type: application/vnd.android.package-archive
-
-      - name: Uploading native mapping file into GitHub release (x64)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-x64/ChromePublic.native.mapping.tar.gz
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}.x64.native.mapping.tar.gz
-          asset_content_type: application/vnd.android.package-archive
+          files: |
+            ./apk-arm/ChromePublic.apk.mapping
+            ./apk-arm64/ChromePublic.apk.mapping
+            ./apk-x86/ChromePublic.apk.mapping
+            ./apk-x64/ChromePublic.apk.mapping
+            ./apk-arm/ChromePublic.native.mapping.tar.gz
+            ./apk-arm64/ChromePublic.native.mapping.tar.gz
+            ./apk-x86/ChromePublic.native.mapping.tar.gz
+            ./apk-x64/ChromePublic.native.mapping.tar.gz
 
       - name: Uploading artifacts to storage
         if: ${{ github.repository_owner == 'kiwibrowser' }}
         run: |
-          rclone copy --fast-list --transfers=16 ./apk-arm/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/arm/
-          rclone copy --fast-list --transfers=16 ./apk-arm64/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/arm64/
-          rclone copy --fast-list --transfers=16 ./apk-x86/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/x86/
-          rclone copy --fast-list --transfers=16 ./apk-x64/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/x64/
-          rclone copy --fast-list --transfers=16 ./apk-arm/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/arm/
-          rclone copy --fast-list --transfers=16 ./apk-arm64/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/arm64/
-          rclone copy --fast-list --transfers=16 ./apk-x86/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/x86/
-          rclone copy --fast-list --transfers=16 ./apk-x64/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/x64/
+          rclone copy --fast-list --transfers=16 ./apk-arm/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/arm/ || true
+          rclone copy --fast-list --transfers=16 ./apk-arm64/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/arm64/ || true
+          rclone copy --fast-list --transfers=16 ./apk-x86/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/x86/ || true
+          rclone copy --fast-list --transfers=16 ./apk-x64/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/x64/ || true
+          rclone copy --fast-list --transfers=16 ./apk-arm/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/arm/ || true
+          rclone copy --fast-list --transfers=16 ./apk-arm64/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/arm64/ || true
+          rclone copy --fast-list --transfers=16 ./apk-x86/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/x86/ || true
+          rclone copy --fast-list --transfers=16 ./apk-x64/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/x64/ || true
 
       - name: Signing and uploading release to GitHub
         if: ${{ github.repository_owner == 'kiwibrowser' && !contains(github.event.head_commit.message, 'release') }}
@@ -471,57 +378,25 @@ jobs:
       - name: Downloading artifacts from storage
         if: ${{ github.repository_owner == 'kiwibrowser' }}
         run: |
-          rclone copy --fast-list --transfers=128 sync:kiwibrowser-builds/${{ github.run_id }}/arm/ ./apk-arm 
+          rclone copy --fast-list --transfers=128 sync:kiwibrowser-builds/${{ github.run_id }}/arm/ ./apk-arm
           rclone copy --fast-list --transfers=128 sync:kiwibrowser-builds/${{ github.run_id }}/arm64/ ./apk-arm64
           rclone copy --fast-list --transfers=128 sync:kiwibrowser-builds/${{ github.run_id }}/x86/ ./apk-x86
           rclone copy --fast-list --transfers=128 sync:kiwibrowser-builds/${{ github.run_id }}/x64/ ./apk-x64
 
-      - name: Uploading release asset (arm-signed)
+      - name: Uploading signed release assets
         if: ${{ github.repository_owner == 'kiwibrowser' }}
-        uses: actions/upload-release-asset@v1
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-arm/ChromePublic-DevSigned.apk
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-arm-signed.apk
-          asset_content_type: application/vnd.android.package-archive
+          tag_name: ${{ github.run_id }}
+          files: |
+            ./apk-arm/ChromePublic-DevSigned.apk
+            ./apk-arm64/ChromePublic-DevSigned.apk
+            ./apk-x86/ChromePublic-DevSigned.apk
+            ./apk-x64/ChromePublic-DevSigned.apk
 
-      - name: Uploading release asset (arm64-signed)
-        if: ${{ github.repository_owner == 'kiwibrowser' }}
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-arm64/ChromePublic-DevSigned.apk
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-arm64-signed.apk
-          asset_content_type: application/vnd.android.package-archive
-
-      - name: Uploading release asset (x86-signed)
-        if: ${{ github.repository_owner == 'kiwibrowser' }}
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-x86/ChromePublic-DevSigned.apk
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-x86-signed.apk
-          asset_content_type: application/vnd.android.package-archive
-
-      - name: Uploading release asset (x64-signed)
-        if: ${{ github.repository_owner == 'kiwibrowser' }}
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./apk-x64/ChromePublic-DevSigned.apk
-          asset_name: com.kiwibrowser.browser.classic-${{ github.run_id }}-x64-signed.apk
-          asset_content_type: application/vnd.android.package-archive
-          
       - name: Send announcement on Discord
         if: ${{ github.repository_owner == 'kiwibrowser' }}
         run: |
           curl -H 'Content-Type: application/json' -X POST -d '{"username": "Kiwi Builder", "content": "A new build of Kiwi Browser (classic) is available: https://github.com/kiwibrowser/src/releases/tag/${{ github.run_id }}"}' ${{ secrets.DISCORD_WEBHOOK }}
-
