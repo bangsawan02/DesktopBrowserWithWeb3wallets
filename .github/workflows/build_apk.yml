@@ -1,4 +1,4 @@
-# Build APKs for Kiwi Browser
+# Build APKs for Kiwi Browser (ARM64 Only)
 name: build apk
 
 # Controls when the action will run. Triggers the workflow on push or pull request events
@@ -10,15 +10,12 @@ on:
         required: true
         default: 'no'
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
-      max-parallel: 4
       matrix:
         platform: [arm64]
 
@@ -66,7 +63,7 @@ jobs:
         run: sudo apt-get update
 
       - name: Installing Python and OpenJDK
-        run: sudo apt-get install -y python openjdk-8-jdk-headless libncurses5 ccache
+        run: sudo apt-get install -y python-is-python3 openjdk-8-jdk-headless libncurses5 ccache
 
       - name: Setting-up Java 8 as default Java provider
         run: sudo update-java-alternatives --set java-1.8.0-openjdk-amd64
@@ -86,21 +83,8 @@ jobs:
       - name: Copying args.gn to target folder
         run: cat .build/android_arm/args.gn | sed "s#target_cpu = \"arm\"#target_cpu = \"${{ matrix.platform }}\"#" | sed "s#android_default_version_name = \"Git\"#android_default_version_name = \"Git$(date '+%y%m%d')Gen${{ github.run_id }}\"#" > secondary_disk/out/android_${{ matrix.platform }}/args.gn
 
-      - name: Modifying args.gn (arm)
-        if: matrix.platform == 'arm'
-        run: sed -i "s#android_default_version_code = \"1\"#android_default_version_code = \"$(date '+%y%m%d')1\"#" secondary_disk/out/android_${{ matrix.platform }}/args.gn
-
       - name: Modifying args.gn (arm64)
-        if: matrix.platform == 'arm64'
         run: sed -i "s#android_default_version_code = \"1\"#android_default_version_code = \"$(date '+%y%m%d')2\"#" secondary_disk/out/android_${{ matrix.platform }}/args.gn
-
-      - name: Modifying args.gn (x86)
-        if: matrix.platform == 'x86'
-        run: sed -i "s#android_default_version_code = \"1\"#android_default_version_code = \"$(date '+%y%m%d')3\"#" secondary_disk/out/android_${{ matrix.platform }}/args.gn
-
-      - name: Modifying args.gn (x64)
-        if: matrix.platform == 'x64'
-        run: sed -i "s#android_default_version_code = \"1\"#android_default_version_code = \"$(date '+%y%m%d')4\"#" secondary_disk/out/android_${{ matrix.platform }}/args.gn
 
       - name: Displaying args.gn
         run: cat secondary_disk/out/android_${{ matrix.platform }}/args.gn
@@ -298,33 +282,11 @@ jobs:
           echo 'user = storage' >> $HOME/.config/rclone/rclone.conf
           echo 'key_pem = ${{ secrets.STORAGE_KEY }}' >> $HOME/.config/rclone/rclone.conf
 
-      - name: Downloading artifact (arm)
-        uses: actions/download-artifact@v4
-        with:
-          name: apk-arm
-          path: ./apk-arm
-        continue-on-error: true
-
       - name: Downloading artifact (arm64)
         uses: actions/download-artifact@v4
         with:
           name: apk-arm64
           path: ./apk-arm64
-        continue-on-error: true
-
-      - name: Downloading artifact (x86)
-        uses: actions/download-artifact@v4
-        with:
-          name: apk-x86
-          path: ./apk-x86
-        continue-on-error: true
-
-      - name: Downloading artifact (x64)
-        uses: actions/download-artifact@v4
-        with:
-          name: apk-x64
-          path: ./apk-x64
-        continue-on-error: true
 
       - name: Creating release and uploading mapping files
         uses: softprops/action-gh-release@v2
@@ -336,7 +298,7 @@ jobs:
           draft: false
           prerelease: true
           body: |
-            Important: This is Kiwi Browser Classic.
+            Important: This is Kiwi Browser Classic (ARM64).
             Kiwi Browser Classic installs as a separate application (com.kiwibrowser.browser.classic).
 
             The new updates of Kiwi Browser have moved to a new repository.
@@ -344,26 +306,14 @@ jobs:
             If you want the latest release of Kiwi Browser, you should go to:
             https://github.com/kiwibrowser/src.next/releases
           files: |
-            ./apk-arm/ChromePublic.apk.mapping
             ./apk-arm64/ChromePublic.apk.mapping
-            ./apk-x86/ChromePublic.apk.mapping
-            ./apk-x64/ChromePublic.apk.mapping
-            ./apk-arm/ChromePublic.native.mapping.tar.gz
             ./apk-arm64/ChromePublic.native.mapping.tar.gz
-            ./apk-x86/ChromePublic.native.mapping.tar.gz
-            ./apk-x64/ChromePublic.native.mapping.tar.gz
 
       - name: Uploading artifacts to storage
         if: ${{ github.repository_owner == 'kiwibrowser' }}
         run: |
-          rclone copy --fast-list --transfers=16 ./apk-arm/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/arm/ || true
           rclone copy --fast-list --transfers=16 ./apk-arm64/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/arm64/ || true
-          rclone copy --fast-list --transfers=16 ./apk-x86/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/x86/ || true
-          rclone copy --fast-list --transfers=16 ./apk-x64/ChromePublic.apk sync:kiwibrowser-builds/${{ github.run_id }}/x64/ || true
-          rclone copy --fast-list --transfers=16 ./apk-arm/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/arm/ || true
           rclone copy --fast-list --transfers=16 ./apk-arm64/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/arm64/ || true
-          rclone copy --fast-list --transfers=16 ./apk-x86/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/x86/ || true
-          rclone copy --fast-list --transfers=16 ./apk-x64/ChromePublic.apk.mapping sync:kiwibrowser-builds/${{ github.run_id }}/x64/ || true
 
       - name: Signing and uploading release to GitHub
         if: ${{ github.repository_owner == 'kiwibrowser' && !contains(github.event.head_commit.message, 'release') }}
@@ -378,10 +328,7 @@ jobs:
       - name: Downloading artifacts from storage
         if: ${{ github.repository_owner == 'kiwibrowser' }}
         run: |
-          rclone copy --fast-list --transfers=128 sync:kiwibrowser-builds/${{ github.run_id }}/arm/ ./apk-arm
           rclone copy --fast-list --transfers=128 sync:kiwibrowser-builds/${{ github.run_id }}/arm64/ ./apk-arm64
-          rclone copy --fast-list --transfers=128 sync:kiwibrowser-builds/${{ github.run_id }}/x86/ ./apk-x86
-          rclone copy --fast-list --transfers=128 sync:kiwibrowser-builds/${{ github.run_id }}/x64/ ./apk-x64
 
       - name: Uploading signed release assets
         if: ${{ github.repository_owner == 'kiwibrowser' }}
@@ -391,12 +338,9 @@ jobs:
         with:
           tag_name: ${{ github.run_id }}
           files: |
-            ./apk-arm/ChromePublic-DevSigned.apk
             ./apk-arm64/ChromePublic-DevSigned.apk
-            ./apk-x86/ChromePublic-DevSigned.apk
-            ./apk-x64/ChromePublic-DevSigned.apk
 
       - name: Send announcement on Discord
         if: ${{ github.repository_owner == 'kiwibrowser' }}
         run: |
-          curl -H 'Content-Type: application/json' -X POST -d '{"username": "Kiwi Builder", "content": "A new build of Kiwi Browser (classic) is available: https://github.com/kiwibrowser/src/releases/tag/${{ github.run_id }}"}' ${{ secrets.DISCORD_WEBHOOK }}
+          curl -H 'Content-Type: application/json' -X POST -d '{"username": "Kiwi Builder", "content": "A new build of Kiwi Browser (classic arm64) is available: https://github.com/kiwibrowser/src/releases/tag/${{ github.run_id }}"}' ${{ secrets.DISCORD_WEBHOOK }}
