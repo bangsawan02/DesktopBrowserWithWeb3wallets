@@ -217,14 +217,14 @@ common_lib_list="\
   libdrm2
   libevdev2
   libexpat1
-  libffi6
+  libffi8
   libfontconfig1
   libfreetype6
   libgbm1
   libglib2.0-0
   libgtk-3-0
   libpam0g
-  libpango1.0-0
+  libpango-1.0-0
   libpci3
   libpcre3
   libpixman-1-0
@@ -391,10 +391,10 @@ nacl_list="\
   libfontconfig1:i386
   libglib2.0-0:i386
   libgpm2:i386
-  libncurses5:i386
-  lib32ncurses5-dev
+  libncurses6:i386
+  lib32ncurses-dev
   libnss3:i386
-  libpango1.0-0:i386
+  libpango-1.0-0:i386
   libssl-dev:i386
   libtinfo-dev
   libtinfo-dev:i386
@@ -417,12 +417,12 @@ if package_exists libssl1.1; then
 elif package_exists libssl1.0.2; then
   nacl_list="${nacl_list} libssl1.0.2:i386"
 else
-  nacl_list="${nacl_list} libssl1.0.0:i386"
+  nacl_list="${nacl_list} libssl3:i386"
 fi
 if package_exists libpng16-16; then
   lib_list="${lib_list} libpng16-16"
 else
-  lib_list="${lib_list} libpng12-0"
+  lib_list="${lib_list} libpng16-16t64"
 fi
 if package_exists libnspr4; then
   lib_list="${lib_list} libnspr4 libnss3"
@@ -446,7 +446,7 @@ if package_exists libbrlapi0.7; then
 elif package_exists libbrlapi0.6; then
   dev_list="${dev_list} libbrlapi0.6"
 else
-  dev_list="${dev_list} libbrlapi0.5"
+  dev_list="${dev_list} libbrlapi0.8"
 fi
 if package_exists apache2.2-bin; then
   dev_list="${dev_list} apache2.2-bin"
@@ -559,7 +559,7 @@ if [ "$do_inst_syms" = "1" ]; then
   if [ "$(dbg_package_name libatk1.0-0)" == "" ]; then
     dbg_list="$dbg_list $(dbg_package_name libatk1.0)"
   fi
-  if [ "$(dbg_package_name libpango1.0-0)" == "" ]; then
+  if [ "$(dbg_package_name libpango-1.0-0)" == "" ]; then
     dbg_list="$dbg_list $(dbg_package_name libpango1.0-dev)"
   fi
 else
