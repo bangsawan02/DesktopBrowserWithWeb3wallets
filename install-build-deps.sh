@@ -177,9 +177,9 @@ dev_list="\
   patch
   perl
   pkg-config
-  python
+  python-is-python3
   python3-cherrypy3
-  python3-crypto
+  python3-cryptography
   python3-dev
   python3-numpy
   python3-opencv
@@ -200,7 +200,7 @@ dev_list="\
 # 64-bit systems need a minimum set of 32-bit compat packages for the pre-built
 # NaCl binaries.
 if file -L /sbin/init | grep -q 'ELF 64-bit'; then
-  dev_list="${dev_list} libc6-i386 lib32gcc1 lib32stdc++6"
+  dev_list="${dev_list} libc6-i386 lib32gcc-s1 lib32stdc++6"
 fi
 # Run-time libraries required by chromeos only
 chromeos_lib_list="libpulse0 libbz2-1.0"
