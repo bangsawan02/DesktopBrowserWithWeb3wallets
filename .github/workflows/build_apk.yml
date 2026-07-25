@@ -62,11 +62,16 @@ jobs:
       - name: Updating APT repository
         run: sudo apt-get update
 
-      - name: Installing Python and OpenJDK
-        run: sudo apt-get install -y python-is-python3 openjdk-8-jdk-headless libncurses5 ccache
+      - name: Setup Java 8 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "8"
 
-      - name: Setting-up Java 8 as default Java provider
-        run: sudo update-java-alternatives --set java-1.8.0-openjdk-amd64
+      - name: Installing Python and Build Utilities
+        run: sudo apt-get install -y python-is-python3 ccache libncurses6 || sudo apt-get install -y python3 ccache
+
+
 
       - name: Installing system dependencies
         run: |
@@ -128,7 +133,7 @@ jobs:
         run: df -h
 
       - name: Fetching number for the latest stable version of Chromium
-        run: curl "https://omahaproxy.appspot.com/all" | grep -Fi "android,stable" | cut -f3 -d"," | awk '{split($0,a,"."); print "MAJOR=" a[1] "\nMINOR=" a[2] "\nBUILD=" a[3] "\nPATCH=" a[4]}' > chrome/VERSION
+        run: python3 -c "import urllib.request, json; data=json.loads(urllib.request.urlopen('https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Android').read().decode('utf-8')); ver=data[0]['version']; v=ver.split('.'); print(f'MAJOR={v[0]}\nMINOR={v[1]}\nBUILD={v[2]}\nPATCH={v[3]}')" > chrome/VERSION
 
       - name: Calculating cache size
         run: du -csh $HOME/cache
@@ -142,6 +147,18 @@ jobs:
           echo "base_dir = $HOME" >> $HOME/.ccache/ccache.conf
           echo "cache_dir = $HOME/cache" >> $HOME/.ccache/ccache.conf
           echo "hash_dir = false" >> $HOME/.ccache/ccache.conf
+
+      - name: Cache ccache (GitHub Actions)
+        uses: actions/cache@v4
+        if: always()
+        with:
+          path: |
+            ~/.ccache
+            ~/cache
+          key: ${{ runner.os }}-ccache-${{ matrix.platform }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-${{ matrix.platform }}-
+            ${{ runner.os }}-ccache-
 
       - name: Running gclient runhooks
         run: gclient runhooks
@@ -177,7 +194,7 @@ jobs:
         run: ninja -C ./secondary_disk/out/android_${{ matrix.platform }} chrome/gpu
 
       - name: Uploading binary objects to cache
-        if: ${{ github.repository_owner == 'kiwibrowser' }}
+        if: always() && github.repository_owner == 'kiwibrowser'
         run: rclone copy --fast-list --transfers=32 $HOME/cache/ sync:kiwibrowser-ccache-${{ matrix.platform }}/
 
       - name: Compiling source-code (components/version_info)
@@ -196,7 +213,7 @@ jobs:
         run: ninja -C ./secondary_disk/out/android_${{ matrix.platform }} chrome/browser
 
       - name: Uploading binary objects to cache
-        if: ${{ github.repository_owner == 'kiwibrowser' }}
+        if: always() && github.repository_owner == 'kiwibrowser'
         run: rclone copy --fast-list --transfers=32 $HOME/cache/ sync:kiwibrowser-ccache-${{ matrix.platform }}/
 
       - name: Compiling source-code (chrome/common)
@@ -233,7 +250,7 @@ jobs:
         run: ninja -C ./secondary_disk/out/android_${{ matrix.platform }} chrome_public_apk
 
       - name: Uploading binary objects to cache
-        if: ${{ github.repository_owner == 'kiwibrowser' }}
+        if: always() && github.repository_owner == 'kiwibrowser'
         run: rclone copy --fast-list --transfers=32 $HOME/cache/ sync:kiwibrowser-ccache-${{ matrix.platform }}/
 
       - name: Generating native symbols mapping
