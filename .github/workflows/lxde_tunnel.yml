@@ -1,7 +1,6 @@
 name: Run Alpine IceWM with Free Cloudflare Tunnel
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:
@@ -29,7 +28,7 @@ jobs:
           sudo curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
           sudo chmod +x /usr/local/bin/cloudflared
 
-          # Jalankan Container Alpine IceWM (Sangat Ringan)
+          # Jalankan Container Alpine IceWM
           docker run -d --name alpine-desktop \
             -e PUID=1000 \
             -e PGID=1000 \
@@ -65,7 +64,12 @@ jobs:
           echo "Workflow berjalan. Silakan akses link di atas."
           sleep 3600
 
-      # 2. Simpan Cache PAKSA meskipun di-Cancel / Gagal
+      # 2. FIX PERMISSION ERROR: Buka izin akses semua file buatan Docker
+      - name: Fix permissions for persistent data
+        if: always()
+        run: sudo chmod -R 777 ${{ github.workspace }}/persistent-data
+
+      # 3. Simpan Cache PAKSA meskipun di-Cancel / Gagal
       - name: Save persistent data cache
         if: always()
         uses: actions/cache/save@v4
@@ -73,7 +77,7 @@ jobs:
           path: ${{ github.workspace }}/persistent-data
           key: desktop-data-${{ github.run_id }}
 
-      # 3. Upload data sebagai Artifacts
+      # 4. Upload data sebagai Artifacts
       - name: Save data via Artifacts
         if: always()
         uses: actions/upload-artifact@v4
