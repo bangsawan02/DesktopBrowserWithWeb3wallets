@@ -207,7 +207,7 @@ chromeos_lib_list="libpulse0 libbz2-1.0"
 # List of required run-time libraries
 common_lib_list="\
   libappindicator3-1
-  libasound2
+  libasound2t64
   libatk1.0-0
   libatspi2.0-0
   libc6
@@ -385,7 +385,7 @@ naclports_list="ant autoconf bison cmake gawk intltool xutils-dev xsltproc"
 nacl_list="\
   g++-mingw-w64-i686
   lib32z1-dev
-  libasound2:i386
+  libasound2t64:i386
   libcap2:i386
   libelf-dev:i386
   libfontconfig1:i386
