@@ -47,14 +47,20 @@ jobs:
       - name: Updating APT repository
         run: sudo apt-get update
 
-      - name: Setup Java 8 (Temurin)
-        uses: actions/setup-java@v4
+      - name: Setup Python 2.7 on Host
+        uses: actions/setup-python@v5
         with:
-          distribution: "temurin"
-          java-version: "8"
+          python-version: '2.7'
 
-      - name: Installing Python and Build Utilities on Host
-        run: sudo apt-get install -y python2 python-is-python2 ccache libncurses6 || (sudo apt-get install -y python2 ccache && sudo ln -sf /usr/bin/python2 /usr/bin/python)
+      - name: Installing Build Utilities on Host
+        run: sudo apt-get install -y ccache libncurses6 || sudo apt-get install -y ccache
+
+      - name: Patching install-build-deps.sh to bypass python2 apt error
+        run: |
+          # Hapus baris python2 agar tidak error di Ubuntu 24.04 Host yang tidak punya package python2
+          sed -i 's/^  python2/  # python2/g' install-build-deps.sh
+          # Tampilkan beberapa baris untuk memastikan berhasil dipatch
+          grep -C 2 "python" install-build-deps.sh
 
       - name: Installing system dependencies on Host
         run: |
@@ -109,25 +115,33 @@ jobs:
           docker exec lxde-desktop bash -c "echo 'export CXX="ccache clang++ -Qunused-arguments"' >> /root/.bashrc"
           docker exec lxde-desktop bash -c "echo 'export JAVA_HOME="/usr/lib/jvm/java-8-openjdk-amd64"' >> /root/.bashrc"
           
-          # 4. Install dependency dasar di dalam container
+          # 4. Install dependency dasar di dalam container (universe repo untuk python2)
           docker exec lxde-desktop apt-get update
-          docker exec lxde-desktop apt-get install -y python2 python-is-python2 ccache libncurses6 git curl wget sudo openjdk-8-jdk GnuPG
+          docker exec lxde-desktop apt-get install -y software-properties-common
+          docker exec lxde-desktop add-apt-repository -y universe
+          docker exec lxde-desktop apt-get update
+          
+          # Patch install-build-deps.sh di kontainer juga agar aman
+          docker exec lxde-desktop sed -i 's/^  python2/  # python2/g' /workspace/install-build-deps.sh
+          
+          docker exec lxde-desktop apt-get install -y python2 python-is-python2 ccache libncurses6 git curl wget sudo openjdk-8-jdk GnuPG || \
+            (docker exec lxde-desktop apt-get install -y ccache libncurses6 git curl wget sudo openjdk-8-jdk GnuPG && docker exec lxde-desktop ln -sf /usr/bin/python3 /usr/bin/python)
           
           # 5. Jalankan install-build-deps.sh di container
           docker exec lxde-desktop bash -c "cd /workspace && bash install-build-deps.sh --no-chromeos-fonts --unsupported"
           docker exec lxde-desktop bash -c "cd /workspace && build/linux/sysroot_scripts/install-sysroot.py --arch=i386"
           docker exec lxde-desktop bash -c "cd /workspace && build/linux/sysroot_scripts/install-sysroot.py --arch=amd64"
 
-          # 6. Install VS Code
+          # 6. Install VS Code di dalam kontener
           docker exec lxde-desktop bash -c "wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /etc/apt/trusted.gpg.d/microsoft.gpg"
           docker exec lxde-desktop bash -c "echo 'deb [arch=amd64,arm64,armhf] https://packages.microsoft.com/repos/code stable main' > /etc/apt/sources.list.d/vscode.list"
           docker exec lxde-desktop apt-get update
           docker exec lxde-desktop apt-get install -y code
           
-          # 7. Wrapper code no-sandbox untuk root
+          # 7. Wrapper code no-sandbox untuk root agar VS Code bisa dijalankan sebagai root langsung
           docker exec lxde-desktop bash -c "echo '#!/bin/bash' > /usr/local/bin/code && echo 'exec /usr/bin/code --no-sandbox "\\$@"' >> /usr/local/bin/code && chmod +x /usr/local/bin/code"
           
-          # 8. Tambahkan launcher VS Code di desktop
+          # 8. Tambahkan launcher VS Code di desktop kontener
           docker exec lxde-desktop mkdir -p /root/Desktop
           docker exec lxde-desktop cp /usr/share/applications/code.desktop /root/Desktop/
           docker exec lxde-desktop chmod +x /root/Desktop/code.desktop
