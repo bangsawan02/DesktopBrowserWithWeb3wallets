@@ -177,7 +177,7 @@ dev_list="\
   patch
   perl
   pkg-config
-  python-is-python3
+  python2
   python3-cherrypy3
   python3-cryptography
   python3-dev
