@@ -1,0 +1,64 @@
+name: Run LXDE with Free Cloudflare Tunnel
+on: [push, workflow_dispatch]
+
+jobs:
+  lxde-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Cloudflared Installation Package
+        uses: actions/cache@v4
+        if: always()
+        with:
+          path: |
+            cloudflared-linux-amd64.deb
+          key: ${{ runner.os }}-cloudflared-deb-cache
+
+      - name: Create local data directory
+        run: mkdir -p ${{ github.workspace }}/persistent-data
+
+      - name: Run LXDE Container
+        run: |
+          # Menjalankan container LXDE (NoVNC di port 80)
+          docker run -d --name lxde-desktop \
+            -v ${{ github.workspace }}/persistent-data:/persistent-data \
+            -p 8080:80 dorowu/ubuntu-desktop-lxde-vnc:latest
+          
+          # Simulasi pembuatan data
+          docker exec lxde-desktop touch /persistent-data/saved-file.txt
+
+      - name: Install Cloudflare CLI
+        run: |
+          if [ ! -f "cloudflared-linux-amd64.deb" ]; then
+            wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          fi
+          sudo dpkg -i cloudflared-linux-amd64.deb
+
+      - name: Start Quick Tunnel and Show Link
+        run: |
+          # Jalankan tunnel tanpa token ke port NoVNC (8080) dan simpan log ke file
+          cloudflared tunnel --url http://localhost:8080 > cloudflare.log 2>&1 &
+          
+          # Tunggu beberapa detik hingga Cloudflare men-generate URL gratis
+          sleep 12
+          
+          # Ekstrak dan tampilkan URL trycloudflare ke log GitHub Actions
+          echo "=================================================="
+          echo " KLIK LINK DI BAWAH INI UNTUK MENGAKSES LXDE:"
+          grep -o 'https://[^ ]*trycloudflare.com' cloudflare.log || cat cloudflare.log
+          echo "=================================================="
+
+      - name: Keep Alive
+        run: |
+          # Menjaga workflow tetap aktif selama 1 jam (3600 detik) untuk Anda gunakan
+          echo "Workflow berjalan. Silakan akses link di atas."
+          sleep 3600
+
+      - name: Save data via Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: saved-desktop-data
+          path: ${{ github.workspace }}/persistent-data/
