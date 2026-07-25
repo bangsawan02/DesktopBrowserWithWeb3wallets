@@ -31,12 +31,8 @@ usage() {
 # Build list of apt packages in dpkg --get-selections format.
 build_apt_package_list() {
   echo "Building apt package list." >&2
-  apt-cache dumpavail | \
-    python -c '\
-      from __future__ import print_function; \
-      import re,sys; \
-      o = sys.stdin.read(); \
-      p = {"i386": ":i386"}; \
+  apt-cache pkgnames
+}; \
       f = re.M | re.S; \
       r = re.compile(r"^Package: (.+?)$.+?^Architecture: (.+?)$", f); \
       m = ["%s%s" % (x, p.get(y, "")) for x, y in re.findall(r, o)]; \
@@ -186,14 +182,14 @@ dev_list="\
   perl
   pkg-config
   python
-  python-cherrypy3
-  python-crypto
-  python-dev
-  python-numpy
-  python-opencv
-  python-openssl
-  python-psutil
-  python-yaml
+  python3-cherrypy3
+  python3-crypto
+  python3-dev
+  python3-numpy
+  python3-opencv
+  python3-openssl
+  python3-psutil
+  python3-yaml
   rpm
   ruby
   subversion
@@ -472,8 +468,10 @@ elif package_exists php7.1-cgi; then
   dev_list="${dev_list} php7.1-cgi libapache2-mod-php7.1"
 elif package_exists php7.0-cgi; then
   dev_list="${dev_list} php7.0-cgi libapache2-mod-php7.0"
+elif package_exists php-cgi; then
+  dev_list="${dev_list} php-cgi libapache2-mod-php"
 else
-  dev_list="${dev_list} php5-cgi libapache2-mod-php5"
+  echo "PHP not found, skipping php5 fallback" >&2
 fi
 # Some packages are only needed if the distribution actually supports
 # installing them.
