@@ -1,182 +1,79 @@
-name: Run LXDE with Free Cloudflare Tunnel
-on: [push, workflow_dispatch]
+name: Run Alpine Desktop with Free Cloudflare Tunnel
+
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
-  lxde-job:
-    runs-on: ubuntu-22.04
+  desktop-job:
+    runs-on: ubuntu-latest
     steps:
-      - name: Initializing build
-        run: echo "Memulai persiapan lingkungan build Kiwi Browser..."
-
-      - name: Reclaiming disk space on / by disabling swap partition
-        run: |
-          sudo swapoff -av
-          sudo rm -f /swapfile
-
-      - name: Reclaiming disk space on / by removing .NET framework
-        run: sudo rm -rf /usr/share/dotnet
-
-      - name: Checking-out source-code in $GITHUB_WORKSPACE
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Creating secondary disk folder on /dev/disk/azure/resource-part1 (SSD)
-        run: |
-          sudo mkdir -p /extended_data
-          sudo chown -R runner:docker /extended_data
-
-      - name: On SSD - Creating symlink on /dev/disk/azure/root-part1 pointing to /dev/disk/azure/resource-part1
-        run: |
-          sudo ln -s /extended_data /mnt/secondary_disk
-          sudo ln -s /mnt/secondary_disk $GITHUB_WORKSPACE/
-
-      - name: Checking-out CIPD dependencies in /mnt/secondary_disk/.cipd
-        uses: actions/checkout@v4
-        with:
-          repository: kiwibrowser/dependencies
-          path: ./secondary_disk/.cipd
-
-      - name: Linking .cipd in the proper path and copying .gclient and .gclient_entries
-        run: |
-          ln -s $GITHUB_WORKSPACE/./secondary_disk/.cipd ..
-          cp ../.cipd/.gclient ..
-          cp ../.cipd/.gclient_entries ..
-
-      - name: Installing rclone
-        run: curl https://rclone.org/install.sh | sudo bash
-
-      - name: Updating APT repository
-        run: sudo apt-get update
-
-      - name: Setup Python 2.7 on Host
-        uses: actions/setup-python@v5
-        with:
-          python-version: '2.7'
-
-      - name: Installing Build Utilities on Host
-        run: sudo apt-get install -y ccache libncurses6 || sudo apt-get install -y ccache
-
-      - name: Patching install-build-deps.sh to bypass python2 apt error
-        run: |
-          # Hapus baris python2 agar tidak error di Ubuntu Host
-          sed -i 's/^  python2/  # python2/g' install-build-deps.sh
-          # Tampilkan beberapa baris untuk memastikan berhasil dipatch
-          grep -C 2 "python" install-build-deps.sh
-
-      - name: Installing system dependencies on Host
-        run: |
-          sudo bash install-build-deps.sh --no-chromeos-fonts --unsupported
-          build/linux/sysroot_scripts/install-sysroot.py --arch=i386
-          build/linux/sysroot_scripts/install-sysroot.py --arch=amd64
-
-      - name: Creating output folder
-        run: mkdir -p secondary_disk/out/android_arm64
-
-      - name: Downloading depot_tools
-        working-directory: ./secondary_disk
-        run: git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
 
       - name: Create local data directory
         run: mkdir -p ${{ github.workspace }}/persistent-data
 
-      - name: Cache Cloudflared Installation Package
-        uses: actions/cache@v4
-        if: always()
+      # 1. Restore Cache dari Run Sebelumnya (Jika Ada)
+      - name: Restore persistent data cache
+        uses: actions/cache/restore@v4
         with:
-          path: |
-            cloudflared-linux-amd64.deb
-          key: ${{ runner.os }}-cloudflared-deb-cache
+          path: ${{ github.workspace }}/persistent-data
+          key: desktop-data-${{ github.run_id }}
+          restore-keys: |
+            desktop-data-
 
-      - name: Run LXDE Container
+      - name: Setup Cloudflared & Run Alpine WebTop
         run: |
-          # Menjalankan container LXDE (NoVNC di port 80)
-          # Kita mounting $GITHUB_WORKSPACE ke /workspace, dan /extended_data ke /extended_data
-          docker run -d --name lxde-desktop \
-            -v ${{ github.workspace }}:/workspace \
-            -v /extended_data:/extended_data \
-            -v ${{ github.workspace }}/persistent-data:/persistent-data \
-            -p 8080:80 dorowu/ubuntu-desktop-lxde-vnc:latest
+          # Download binary cloudflared
+          sudo curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          sudo chmod +x /usr/local/bin/cloudflared
 
-      - name: Configure Build Environment inside LXDE Container
+          # Jalankan Container Alpine Desktop
+          docker run -d --name alpine-desktop \
+            -e PUID=1000 \
+            -e PGID=1000 \
+            -e TZ=Asia/Jakarta \
+            -v ${{ github.workspace }}/persistent-data:/config \
+            -p 3000:3000 \
+            --shm-size="1gb" \
+            lscr.io/linuxserver/webtop:alpine-xfce
+
+      - name: Start Quick Tunnel and Get URL Fast
         run: |
-          echo "=== MEMULAI KONFIGURASI KONTENER LXDE ==="
-          
-          # 1. Buat direktori dan symlink di container
-          docker exec lxde-desktop mkdir -p /mnt
-          docker exec lxde-desktop ln -sf /extended_data /mnt/secondary_disk
-          docker exec lxde-desktop ln -sf /mnt/secondary_disk /workspace/secondary_disk
-          
-          # 2. Salin file gclient ke root kontener
-          docker exec lxde-desktop cp /workspace/secondary_disk/.cipd/.gclient /
-          docker exec lxde-desktop cp /workspace/secondary_disk/.cipd/.gclient_entries /
-          
-          # 3. Setup bashrc environment untuk terminal LXDE
-          docker exec lxde-desktop bash -c "echo 'export PATH="/workspace/secondary_disk/depot_tools:\$PATH"' >> /root/.bashrc"
-          docker exec lxde-desktop bash -c "echo 'export CC="ccache clang -Qunused-arguments"' >> /root/.bashrc"
-          docker exec lxde-desktop bash -c "echo 'export CXX="ccache clang++ -Qunused-arguments"' >> /root/.bashrc"
-          docker exec lxde-desktop bash -c "echo 'export JAVA_HOME="/usr/lib/jvm/java-8-openjdk-amd64"' >> /root/.bashrc"
-          
-          # 4. Install dependency dasar di dalam container (universe repo untuk python2)
-          docker exec lxde-desktop apt-get update
-          docker exec lxde-desktop apt-get install -y software-properties-common
-          docker exec lxde-desktop add-apt-repository -y universe
-          docker exec lxde-desktop apt-get update
-          
-          # Patch install-build-deps.sh di kontainer juga agar aman
-          docker exec lxde-desktop sed -i 's/^  python2/  # python2/g' /workspace/install-build-deps.sh
-          
-          docker exec lxde-desktop apt-get install -y python2 python-is-python2 ccache libncurses6 git curl wget sudo openjdk-8-jdk GnuPG || \
-            (docker exec lxde-desktop apt-get install -y ccache libncurses6 git curl wget sudo openjdk-8-jdk GnuPG && docker exec lxde-desktop ln -sf /usr/bin/python3 /usr/bin/python)
-          
-          # 5. Jalankan install-build-deps.sh di container
-          docker exec lxde-desktop bash -c "cd /workspace && bash install-build-deps.sh --no-chromeos-fonts --unsupported"
-          docker exec lxde-desktop bash -c "cd /workspace && build/linux/sysroot_scripts/install-sysroot.py --arch=i386"
-          docker exec lxde-desktop bash -c "cd /workspace && build/linux/sysroot_scripts/install-sysroot.py --arch=amd64"
+          cloudflared tunnel --url http://localhost:3000 > cloudflare.log 2>&1 &
 
-          # 6. Install VS Code di dalam kontener
-          docker exec lxde-desktop bash -c "wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /etc/apt/trusted.gpg.d/microsoft.gpg"
-          docker exec lxde-desktop bash -c "echo 'deb [arch=amd64,arm64,armhf] https://packages.microsoft.com/repos/code stable main' > /etc/apt/sources.list.d/vscode.list"
-          docker exec lxde-desktop apt-get update
-          docker exec lxde-desktop apt-get install -y code
-          
-          # 7. Wrapper code no-sandbox untuk root agar VS Code bisa dijalankan sebagai root langsung
-          docker exec lxde-desktop bash -c "echo '#!/bin/bash' > /usr/local/bin/code && echo 'exec /usr/bin/code --no-sandbox "\\$@"' >> /usr/local/bin/code && chmod +x /usr/local/bin/code"
-          
-          # 8. Tambahkan launcher VS Code di desktop kontener
-          docker exec lxde-desktop mkdir -p /root/Desktop
-          docker exec lxde-desktop cp /usr/share/applications/code.desktop /root/Desktop/
-          docker exec lxde-desktop chmod +x /root/Desktop/code.desktop
+          echo "Menunggu URL Cloudflare..."
+          for i in {1..15}; do
+            URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' cloudflare.log || true)
+            if [ -n "$URL" ]; then
+              echo "=================================================="
+              echo " KLIK LINK DI BAWAH INI UNTUK MENGAKSES DESKTOP:"
+              echo "$URL"
+              echo "=================================================="
+              exit 0
+            fi
+            sleep 1
+          done
 
-          echo "=== KONFIGURASI KONTENER LXDE BERHASIL ==="
-
-      - name: Install Cloudflare CLI on Host
-        run: |
-          if [ ! -f "cloudflared-linux-amd64.deb" ]; then
-            wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          fi
-          sudo dpkg -i cloudflared-linux-amd64.deb
-
-      - name: Start Quick Tunnel and Show Link
-        run: |
-          # Jalankan tunnel tanpa token ke port NoVNC (8080) dan simpan log ke file
-          cloudflared tunnel --url http://localhost:8080 > cloudflare.log 2>&1 &
-          
-          # Tunggu beberapa detik hingga Cloudflare men-generate URL gratis
-          sleep 12
-          
-          # Ekstrak dan tampilkan URL trycloudflare ke log GitHub Actions
-          echo "=================================================="
-          echo " KLIK LINK DI BAWAH INI UNTUK MENGAKSES LXDE:"
-          grep -o 'https://[^ ]*trycloudflare.com' cloudflare.log || cat cloudflare.log
-          echo "=================================================="
+          cat cloudflare.log
 
       - name: Keep Alive
         run: |
-          # Menjaga workflow tetap aktif selama 2 jam (7200 detik) untuk Anda gunakan
           echo "Workflow berjalan. Silakan akses link di atas."
-          sleep 7200
+          sleep 3600
 
+      # 2. Simpan Cache PAKSA meskipun di-Cancel / Gagal
+      - name: Save persistent data cache
+        if: always() # Tetap berjalan walau tombol Cancel ditekan
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/persistent-data
+          key: desktop-data-${{ github.run_id }}
+
+      # 3. Tetap Upload sebagai Artifact agar bisa di-download manual
       - name: Save data via Artifacts
-        if: always()
+        if: always() # Tetap berjalan walau di-cancel
         uses: actions/upload-artifact@v4
         with:
           name: saved-desktop-data
