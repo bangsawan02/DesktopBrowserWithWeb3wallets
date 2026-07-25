@@ -5,8 +5,72 @@ jobs:
   lxde-job:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Initializing build
+        run: echo "Memulai persiapan lingkungan build Kiwi Browser..."
+
+      - name: Reclaiming disk space on / by disabling swap partition
+        run: |
+          sudo swapoff -av
+          sudo rm -f /swapfile
+
+      - name: Reclaiming disk space on / by removing .NET framework
+        run: sudo rm -rf /usr/share/dotnet
+
+      - name: Checking-out source-code in $GITHUB_WORKSPACE
         uses: actions/checkout@v4
+
+      - name: Creating secondary disk folder on /dev/disk/azure/resource-part1 (SSD)
+        run: |
+          sudo mkdir -p /extended_data
+          sudo chown -R runner:docker /extended_data
+
+      - name: On SSD - Creating symlink on /dev/disk/azure/root-part1 pointing to /dev/disk/azure/resource-part1
+        run: |
+          sudo ln -s /extended_data /mnt/secondary_disk
+          sudo ln -s /mnt/secondary_disk $GITHUB_WORKSPACE/
+
+      - name: Checking-out CIPD dependencies in /mnt/secondary_disk/.cipd
+        uses: actions/checkout@v4
+        with:
+          repository: kiwibrowser/dependencies
+          path: ./secondary_disk/.cipd
+
+      - name: Linking .cipd in the proper path and copying .gclient and .gclient_entries
+        run: |
+          ln -s $GITHUB_WORKSPACE/./secondary_disk/.cipd ..
+          cp ../.cipd/.gclient ..
+          cp ../.cipd/.gclient_entries ..
+
+      - name: Installing rclone
+        run: curl https://rclone.org/install.sh | sudo bash
+
+      - name: Updating APT repository
+        run: sudo apt-get update
+
+      - name: Setup Java 8 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "8"
+
+      - name: Installing Python and Build Utilities on Host
+        run: sudo apt-get install -y python2 python-is-python2 ccache libncurses6 || (sudo apt-get install -y python2 ccache && sudo ln -sf /usr/bin/python2 /usr/bin/python)
+
+      - name: Installing system dependencies on Host
+        run: |
+          sudo bash install-build-deps.sh --no-chromeos-fonts --unsupported
+          build/linux/sysroot_scripts/install-sysroot.py --arch=i386
+          build/linux/sysroot_scripts/install-sysroot.py --arch=amd64
+
+      - name: Creating output folder
+        run: mkdir -p secondary_disk/out/android_arm64
+
+      - name: Downloading depot_tools
+        working-directory: ./secondary_disk
+        run: git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+
+      - name: Create local data directory
+        run: mkdir -p ${{ github.workspace }}/persistent-data
 
       - name: Cache Cloudflared Installation Package
         uses: actions/cache@v4
@@ -16,20 +80,61 @@ jobs:
             cloudflared-linux-amd64.deb
           key: ${{ runner.os }}-cloudflared-deb-cache
 
-      - name: Create local data directory
-        run: mkdir -p ${{ github.workspace }}/persistent-data
-
       - name: Run LXDE Container
         run: |
           # Menjalankan container LXDE (NoVNC di port 80)
+          # Kita mounting $GITHUB_WORKSPACE ke /workspace, dan /extended_data ke /extended_data
           docker run -d --name lxde-desktop \
+            -v ${{ github.workspace }}:/workspace \
+            -v /extended_data:/extended_data \
             -v ${{ github.workspace }}/persistent-data:/persistent-data \
             -p 8080:80 dorowu/ubuntu-desktop-lxde-vnc:latest
-          
-          # Simulasi pembuatan data
-          docker exec lxde-desktop touch /persistent-data/saved-file.txt
 
-      - name: Install Cloudflare CLI
+      - name: Configure Build Environment inside LXDE Container
+        run: |
+          echo "=== MEMULAI KONFIGURASI KONTENER LXDE ==="
+          
+          # 1. Buat direktori dan symlink di container
+          docker exec lxde-desktop mkdir -p /mnt
+          docker exec lxde-desktop ln -sf /extended_data /mnt/secondary_disk
+          docker exec lxde-desktop ln -sf /mnt/secondary_disk /workspace/secondary_disk
+          
+          # 2. Salin file gclient ke root kontener
+          docker exec lxde-desktop cp /workspace/secondary_disk/.cipd/.gclient /
+          docker exec lxde-desktop cp /workspace/secondary_disk/.cipd/.gclient_entries /
+          
+          # 3. Setup bashrc environment untuk terminal LXDE
+          docker exec lxde-desktop bash -c "echo 'export PATH="/workspace/secondary_disk/depot_tools:\$PATH"' >> /root/.bashrc"
+          docker exec lxde-desktop bash -c "echo 'export CC="ccache clang -Qunused-arguments"' >> /root/.bashrc"
+          docker exec lxde-desktop bash -c "echo 'export CXX="ccache clang++ -Qunused-arguments"' >> /root/.bashrc"
+          docker exec lxde-desktop bash -c "echo 'export JAVA_HOME="/usr/lib/jvm/java-8-openjdk-amd64"' >> /root/.bashrc"
+          
+          # 4. Install dependency dasar di dalam container
+          docker exec lxde-desktop apt-get update
+          docker exec lxde-desktop apt-get install -y python2 python-is-python2 ccache libncurses6 git curl wget sudo openjdk-8-jdk GnuPG
+          
+          # 5. Jalankan install-build-deps.sh di container
+          docker exec lxde-desktop bash -c "cd /workspace && bash install-build-deps.sh --no-chromeos-fonts --unsupported"
+          docker exec lxde-desktop bash -c "cd /workspace && build/linux/sysroot_scripts/install-sysroot.py --arch=i386"
+          docker exec lxde-desktop bash -c "cd /workspace && build/linux/sysroot_scripts/install-sysroot.py --arch=amd64"
+
+          # 6. Install VS Code
+          docker exec lxde-desktop bash -c "wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /etc/apt/trusted.gpg.d/microsoft.gpg"
+          docker exec lxde-desktop bash -c "echo 'deb [arch=amd64,arm64,armhf] https://packages.microsoft.com/repos/code stable main' > /etc/apt/sources.list.d/vscode.list"
+          docker exec lxde-desktop apt-get update
+          docker exec lxde-desktop apt-get install -y code
+          
+          # 7. Wrapper code no-sandbox untuk root
+          docker exec lxde-desktop bash -c "echo '#!/bin/bash' > /usr/local/bin/code && echo 'exec /usr/bin/code --no-sandbox "\\$@"' >> /usr/local/bin/code && chmod +x /usr/local/bin/code"
+          
+          # 8. Tambahkan launcher VS Code di desktop
+          docker exec lxde-desktop mkdir -p /root/Desktop
+          docker exec lxde-desktop cp /usr/share/applications/code.desktop /root/Desktop/
+          docker exec lxde-desktop chmod +x /root/Desktop/code.desktop
+
+          echo "=== KONFIGURASI KONTENER LXDE BERHASIL ==="
+
+      - name: Install Cloudflare CLI on Host
         run: |
           if [ ! -f "cloudflared-linux-amd64.deb" ]; then
             wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
@@ -52,9 +157,9 @@ jobs:
 
       - name: Keep Alive
         run: |
-          # Menjaga workflow tetap aktif selama 1 jam (3600 detik) untuk Anda gunakan
+          # Menjaga workflow tetap aktif selama 2 jam (7200 detik) untuk Anda gunakan
           echo "Workflow berjalan. Silakan akses link di atas."
-          sleep 3600
+          sleep 7200
 
       - name: Save data via Artifacts
         if: always()
