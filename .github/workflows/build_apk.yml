@@ -69,7 +69,7 @@ jobs:
           java-version: "8"
 
       - name: Installing Python and Build Utilities
-        run: sudo apt-get install -y python-is-python3 ccache libncurses6 || sudo apt-get install -y python3 ccache
+        run: sudo apt-get install -y python2 python-is-python2 ccache libncurses6 || (sudo apt-get install -y python2 ccache && sudo ln -sf /usr/bin/python2 /usr/bin/python)
 
 
 
