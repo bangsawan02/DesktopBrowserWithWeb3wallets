@@ -3,7 +3,7 @@ on: [push, workflow_dispatch]
 
 jobs:
   lxde-job:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Initializing build
         run: echo "Memulai persiapan lingkungan build Kiwi Browser..."
@@ -57,7 +57,7 @@ jobs:
 
       - name: Patching install-build-deps.sh to bypass python2 apt error
         run: |
-          # Hapus baris python2 agar tidak error di Ubuntu 24.04 Host yang tidak punya package python2
+          # Hapus baris python2 agar tidak error di Ubuntu Host
           sed -i 's/^  python2/  # python2/g' install-build-deps.sh
           # Tampilkan beberapa baris untuk memastikan berhasil dipatch
           grep -C 2 "python" install-build-deps.sh
