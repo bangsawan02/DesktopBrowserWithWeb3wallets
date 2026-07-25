@@ -32,12 +32,8 @@ usage() {
 build_apt_package_list() {
   echo "Building apt package list." >&2
   apt-cache pkgnames
-}; \
-      f = re.M | re.S; \
-      r = re.compile(r"^Package: (.+?)$.+?^Architecture: (.+?)$", f); \
-      m = ["%s%s" % (x, p.get(y, "")) for x, y in re.findall(r, o)]; \
-      print("\n".join(m))'
 }
+
 # Checks whether a particular package is available in the repos.
 # Uses pre-formatted ${apt_package_list}.
 # USAGE: $ package_exists <package name>
