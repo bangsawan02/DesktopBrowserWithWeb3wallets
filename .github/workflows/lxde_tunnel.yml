@@ -1,4 +1,4 @@
-name: Run Alpine Desktop with Free Cloudflare Tunnel
+name: Run Alpine IceWM with Free Cloudflare Tunnel
 
 on:
   push:
@@ -23,13 +23,13 @@ jobs:
           restore-keys: |
             desktop-data-
 
-      - name: Setup Cloudflared & Run Alpine WebTop
+      - name: Setup Cloudflared & Run Alpine IceWM
         run: |
-          # Download binary cloudflared
+          # Download binary cloudflared langsung
           sudo curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
           sudo chmod +x /usr/local/bin/cloudflared
 
-          # Jalankan Container Alpine Desktop
+          # Jalankan Container Alpine IceWM (Sangat Ringan)
           docker run -d --name alpine-desktop \
             -e PUID=1000 \
             -e PGID=1000 \
@@ -37,12 +37,14 @@ jobs:
             -v ${{ github.workspace }}/persistent-data:/config \
             -p 3000:3000 \
             --shm-size="1gb" \
-            lscr.io/linuxserver/webtop:alpine-xfce
+            lscr.io/linuxserver/webtop:alpine-icewm
 
       - name: Start Quick Tunnel and Get URL Fast
         run: |
+          # Hubungkan tunnel ke port 3000 (port WebTop)
           cloudflared tunnel --url http://localhost:3000 > cloudflare.log 2>&1 &
 
+          # Polling loop: Cek log setiap 1 detik sampai link muncul
           echo "Menunggu URL Cloudflare..."
           for i in {1..15}; do
             URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' cloudflare.log || true)
@@ -65,15 +67,15 @@ jobs:
 
       # 2. Simpan Cache PAKSA meskipun di-Cancel / Gagal
       - name: Save persistent data cache
-        if: always() # Tetap berjalan walau tombol Cancel ditekan
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/persistent-data
           key: desktop-data-${{ github.run_id }}
 
-      # 3. Tetap Upload sebagai Artifact agar bisa di-download manual
+      # 3. Upload data sebagai Artifacts
       - name: Save data via Artifacts
-        if: always() # Tetap berjalan walau di-cancel
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: saved-desktop-data
