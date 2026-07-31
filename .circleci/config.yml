@@ -1,0 +1,229 @@
+version: 2.1
+
+jobs:
+  build_apk:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: xlarge
+    environment:
+      PLATFORM: arm64
+      OUTPUT_DIR: /home/circleci/out/android_arm64
+      DEPOT_TOOLS_DIR: /home/circleci/depot_tools
+      CCACHE_DIR: /home/circleci/cache
+    steps:
+      - name: Reclaiming disk space by disabling swap
+        run: |
+          sudo swapoff -av || true
+          sudo rm -f /swapfile || true
+
+      - name: Reclaiming disk space by removing unused packages
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+
+      - checkout
+
+      - name: Checking available disk space
+        run: df -h
+
+      - name: Checking out CIPD dependencies
+        run: |
+          git clone https://github.com/kiwibrowser/dependencies /home/circleci/.cipd
+          cp /home/circleci/.cipd/.gclient /home/circleci/
+          cp /home/circleci/.cipd/.gclient_entries /home/circleci/
+
+      - name: Updating APT repository
+        run: sudo apt-get update
+
+      - name: Installing Python, OpenJDK and ccache
+        run: sudo apt-get install -y python-is-python3 openjdk-8-jdk-headless libncurses5 ccache curl
+
+      - name: Setting up Java 8 as default
+        run: sudo update-java-alternatives --set java-1.8.0-openjdk-amd64
+
+      - name: Installing system build dependencies
+        run: |
+          sudo bash install-build-deps.sh --no-chromeos-fonts
+          build/linux/sysroot_scripts/install-sysroot.py --arch=i386
+          build/linux/sysroot_scripts/install-sysroot.py --arch=amd64
+
+      - name: Creating output folder
+        run: mkdir -p $OUTPUT_DIR
+
+      - name: Generating APK signature key
+        run: |
+          keytool -genkey -v \
+            -keystore keystore.jks \
+            -alias dev \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass public_password \
+            -keypass public_password \
+            -dname "cn=Kiwi Browser (unverified), ou=Actions, o=Kiwi Browser, c=CircleCI"
+
+      - name: Copying and patching args.gn
+        run: |
+          cat .build/android_arm/args.gn \
+            | sed "s#target_cpu = \"arm\"#target_cpu = \"${PLATFORM}\"#" \
+            | sed "s#android_default_version_name = \"Git\"#android_default_version_name = \"Git$(date '+%y%m%d')Gen${CIRCLE_BUILD_NUM}\"#" \
+            > $OUTPUT_DIR/args.gn
+          sed -i "s#android_default_version_code = \"1\"#android_default_version_code = \"$(date '+%y%m%d')2\"#" $OUTPUT_DIR/args.gn
+
+      - name: Displaying args.gn
+        run: cat $OUTPUT_DIR/args.gn
+
+      - name: Downloading depot_tools
+        run: git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git $DEPOT_TOOLS_DIR
+
+      - name: Setting environment variables for build
+        run: |
+          echo 'export PATH="$PATH:/home/circleci/depot_tools"' >> $BASH_ENV
+          echo 'export CC="ccache clang -Qunused-arguments"' >> $BASH_ENV
+          echo 'export CXX="ccache clang++ -Qunused-arguments"' >> $BASH_ENV
+
+      - restore_cache:
+          keys:
+            - ccache-arm64-v1-{{ .Branch }}-{{ .Revision }}
+            - ccache-arm64-v1-{{ .Branch }}-
+            - ccache-arm64-v1-
+
+      - name: Creating ccache configuration
+        run: |
+          mkdir -p $HOME/.ccache/
+          cat > $HOME/.ccache/ccache.conf << EOF
+          compiler_check = none
+          stats = false
+          max_size = 10G
+          base_dir = $HOME
+          cache_dir = $CCACHE_DIR
+          hash_dir = false
+          EOF
+
+      - name: Fetching latest stable Chromium version
+        run: |
+          curl "https://omahaproxy.appspot.com/all" \
+            | grep -Fi "android,stable" \
+            | cut -f3 -d"," \
+            | awk '{split($0,a,"."); print "MAJOR=" a[1] "\nMINOR=" a[2] "\nBUILD=" a[3] "\nPATCH=" a[4]}' \
+            > chrome/VERSION || true
+          cat chrome/VERSION
+
+      - name: Running gclient runhooks
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          cd /home/circleci
+          gclient runhooks
+
+      - name: Checking available disk space before build
+        run: df -h
+
+      - name: Generating build files with gn
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          gn gen $OUTPUT_DIR
+
+      - name: Compiling base
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR base
+
+      - name: Compiling chrome_java
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR chrome_java
+
+      - name: Compiling components/guest_view/renderer
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR components/guest_view/renderer
+
+      - name: Compiling chrome/gpu
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR chrome/gpu
+
+      - name: Compiling components/version_info
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR components/version_info
+
+      - name: Compiling ui/base
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR ui/base
+
+      - name: Compiling chrome/browser:resources
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR chrome/browser:resources
+
+      - name: Compiling chrome/browser/ui
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR chrome/browser/ui
+
+      - name: Compiling chrome/browser
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR chrome/browser
+
+      - name: Compiling chrome/common
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR chrome/common
+
+      - name: Compiling chrome/renderer
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR chrome/renderer
+
+      - name: Compiling extensions
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR extensions
+
+      - name: Compiling services
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR services
+
+      - name: Compiling v8
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR v8
+
+      - name: Checking available disk space
+        run: df -h
+
+      - name: Compiling final APK (chrome_public_apk)
+        run: |
+          export PATH="$PATH:/home/circleci/depot_tools"
+          ninja -C $OUTPUT_DIR chrome_public_apk
+
+      - save_cache:
+          key: ccache-arm64-v1-{{ .Branch }}-{{ .Revision }}
+          paths:
+            - /home/circleci/cache
+
+      - name: Generating native symbols mapping
+        run: |
+          mkdir -p $OUTPUT_DIR/lnx64
+          cp /home/circleci/.cipd/tools/* $OUTPUT_DIR/lnx64/ || true
+          chmod +x $OUTPUT_DIR/lnx64/dump_syms || true
+          python components/crash/content/tools/generate_breakpad_symbols.py \
+            --build-dir=$OUTPUT_DIR/lnx64 \
+            --symbols-dir=/tmp/extracted_symbols/ \
+            --binary=$OUTPUT_DIR/lib.unstripped/libchrome.so \
+            --clear --verbose || true
+          tar -czvf $OUTPUT_DIR/apks/ChromePublic.native.mapping.tar.gz /tmp/extracted_symbols || true
+
+      - name: Listing generated APK files
+        run: ls -la $OUTPUT_DIR/apks/
+
+      - store_artifacts:
+          path: /home/circleci/out/android_arm64/apks
+          destination: apks-arm64
+
+workflows:
+  build_apk_workflow:
+    jobs:
+      - build_apk
